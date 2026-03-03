@@ -10,46 +10,49 @@ env:
   CLUSTER_NAME: react-cicd-cluster
   IMAGE_NAME: dhairyashil8416/cicd
 
-# -------------------------
-# 1️⃣ BUILD JOB
-# -------------------------
 jobs:
+
+# --------------------------------------------------
+# 1️⃣ BUILD JOB
+# --------------------------------------------------
   build:
     runs-on: ubuntu-latest
+
     outputs:
-      image_tag: ${{ steps.set_tag.outputs.image_tag }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set Image Tag
-        id: set_tag
+      - name: Generate Image Tag
+        id: meta
         run: echo "image_tag=${GITHUB_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build Docker Image
         run: |
-          docker build -t $IMAGE_NAME:${{ steps.set_tag.outputs.image_tag }} .
+          docker build -t ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image_tag }} .
 
-      - name: Save Image as Artifact
+      - name: Save Docker Image
         run: |
-          docker save $IMAGE_NAME:${{ steps.set_tag.outputs.image_tag }} -o image.tar
+          docker save ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image_tag }} -o image.tar
 
-      - name: Upload Artifact
+      - name: Upload Docker Image Artifact
         uses: actions/upload-artifact@v4
         with:
           name: docker-image
           path: image.tar
 
-# -------------------------
+
+# --------------------------------------------------
 # 2️⃣ PUSH JOB
-# -------------------------
+# --------------------------------------------------
   push:
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download Image Artifact
+      - name: Download Docker Image Artifact
         uses: actions/download-artifact@v4
         with:
           name: docker-image
@@ -65,13 +68,14 @@ jobs:
 
       - name: Push Docker Image
         run: |
-          docker push $IMAGE_NAME:${{ needs.build.outputs.image_tag }}
-          docker tag $IMAGE_NAME:${{ needs.build.outputs.image_tag }} $IMAGE_NAME:latest
-          docker push $IMAGE_NAME:latest
+          docker push ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
+          docker tag ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }} ${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.IMAGE_NAME }}:latest
 
-# -------------------------
+
+# --------------------------------------------------
 # 3️⃣ DEPLOY JOB
-# -------------------------
+# --------------------------------------------------
   deploy:
     needs: push
     runs-on: ubuntu-latest
@@ -89,12 +93,18 @@ jobs:
 
       - name: Update kubeconfig
         run: |
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+          aws eks update-kubeconfig \
+            --name ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
 
-      - name: Update Image in Deployment
+      - name: Debug Image Name
+        run: echo "Deploying image ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+
+      - name: Update Deployment Image
         run: |
-          kubectl set image deployment/react-app react-container=$IMAGE_NAME:${{ needs.build.outputs.image_tag }}
+          kubectl set image deployment/react-app \
+          react-container=${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
 
       - name: Verify Rollout
         run: |
-          kubectl rollout status deployment/react-app
+          kubectl rollout status deployment/react-app --timeout=180s
